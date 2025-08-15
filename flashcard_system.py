@@ -289,17 +289,82 @@ class Flashcard:
 def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
     """Generate a list of flashcards from the input text.
 
-    The algorithm performs the following steps:
+    This function first attempts to identify explicit sections or headings
+    in the text based on delimiters such as a colon (``:``), hyphen (``-``)
+    or en dash (``–``).  When such a heading is found, the portion
+    preceding the delimiter is taken as a *concept* and the following
+    lines until the next heading constitute the *definition*.  Each
+    concept–definition pair becomes a flashcard where the front asks
+    ``מהי …?`` or ``מהם …?`` depending on whether the concept appears to
+    be singular or plural.  If no suitable headings are discovered the
+    function falls back to extractive summarisation: it ranks sentences
+    by TF–IDF, selects the top ``num_cards`` sentences and forms
+    questions of the form ``מהו X?`` where ``X`` is a salient keyword
+    extracted from the sentence.
 
-    1. Split the text into sentences using ``_split_sentences``.
-    2. Score each sentence with TF‑IDF and select the top ``num_cards``
-       sentences.  If there are fewer sentences than requested cards
-       the remainder will be filled with the available sentences.
-    3. For each selected sentence, choose a salient keyword using
-       ``_choose_keyword`` and replace it with blanks to form the
-       question.  The keyword becomes the answer.  The original
-       sentence is stored as context.
+    Parameters
+    ----------
+    text : str
+        The source text from which to generate flashcards.
+    num_cards : int, optional
+        Maximum number of flashcards to return.  Default is 20.
+
+    Returns
+    -------
+    List[Flashcard]
+        A list of flashcards derived from the text.
     """
+    # Attempt to extract concept–definition sections
+    sections: List[Tuple[str, str]] = []
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    current_heading: Optional[str] = None
+    current_content: List[str] = []
+
+    def flush_section() -> None:
+        """Finalize the current section by appending it to the sections list."""
+        nonlocal current_heading, current_content
+        if current_heading:
+            content = " ".join(current_content).strip()
+            if content:
+                sections.append((current_heading, content))
+        current_heading = None
+        current_content = []
+
+    for ln in lines:
+        # Look for a heading delimiter. We only treat a colon, " – " (en dash with spaces)
+        # or " - " (hyphen with spaces) as section separators.  This avoids
+        # splitting words such as "חד-פעמי".
+        delim = None
+        for d in (':', ' – ', ' - '):
+            if d in ln:
+                delim = d
+                break
+        if delim:
+            parts = ln.split(delim, 1)
+            heading = parts[0].strip()
+            remainder = parts[1].strip()
+            flush_section()
+            current_heading = heading
+            if remainder:
+                current_content.append(remainder)
+        else:
+            current_content.append(ln)
+    flush_section()
+
+    flashcards: List[Flashcard] = []
+    # Build flashcards from structured sections if any were found
+    if sections:
+        for heading, content in sections[:num_cards]:
+            # Choose interrogative based on simple plural heuristic
+            interrogative = "מהי"
+            if heading.endswith("ים") or heading.endswith("ות") or heading.endswith("אות"):
+                interrogative = "מהם"
+            question = f"{interrogative} {heading}?"
+            answer = content
+            flashcards.append(Flashcard(question=question, answer=answer, context=content))
+        return flashcards
+
+    # Fallback: extractive summarisation
     sentences = _split_sentences(text)
     if not sentences:
         return []
@@ -308,12 +373,9 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
     scores = tfidf_matrix.sum(axis=1).A1
     ranked_indices = np.argsort(scores)[::-1]
     selected_indices = ranked_indices[: num_cards]
-    flashcards: List[Flashcard] = []
     for idx in selected_indices:
         sentence = sentences[idx]
         keyword = _choose_keyword(sentence, vectorizer, tfidf_matrix, idx)
-        # Create a flashcard where the front poses a question about the keyword
-        # and the back reveals the full sentence as the definition/context.
         question = f"מהו {keyword}?"
         answer = sentence.strip()
         flashcards.append(Flashcard(question=question, answer=answer, context=sentence))
@@ -358,9 +420,11 @@ def generate_mcq(flashcards: Sequence[Flashcard], num_questions: int = 10) -> Li
         options = distractors + [correct]
         random.shuffle(options)
         correct_index = options.index(correct)
-        # Build a clearer prompt: ask for the definition of the concept rather than the concept itself
-        # Extract the keyword from the original question (e.g., "מהו X?" -> "X")
-        keyword = re.sub(r'^מה[וה]\s+', '', fc.question)
+        # Build a clearer prompt: ask for the definition of the concept rather than the concept itself.
+        # Extract the keyword from the original question, removing pronouns such as
+        # "מהו", "מהי" or "מהם" at the start and any trailing question mark.  For example
+        # "מהם יתרונות הפניקס?" -> "יתרונות הפניקס".
+        keyword = re.sub(r'^(מהו|מהי|מהם)\s+', '', fc.question)
         keyword = re.sub(r'\?$', '', keyword).strip()
         prompt = f"מהי ההגדרה של {keyword}?"
         questions.append(MCQQuestion(prompt=prompt, options=options, correct_index=correct_index))
@@ -401,9 +465,9 @@ def generate_additional_flashcards(flashcards: Sequence[Flashcard], wrong_indice
     vectorizer = TfidfVectorizer(max_df=0.9, min_df=1, ngram_range=(1, 2))
     tfidf_matrix = vectorizer.fit_transform(contexts)
     for i, ctx in enumerate(contexts[:count]):
-        # Extract the original keyword from the question (assumes format 'מהו <keyword>?')
+        # Extract the original keyword from the question (handles 'מהו', 'מהי', 'מהם')
         orig_question = flashcards[wrong_indices[i]].question
-        original_keyword = re.sub(r'^מהו\s+', '', orig_question)
+        original_keyword = re.sub(r'^(מהו|מהי|מהם)\s+', '', orig_question)
         original_keyword = re.sub(r'\?$', '', original_keyword).strip()
         row = tfidf_matrix[i].toarray().flatten()
         tokens = vectorizer.get_feature_names_out()

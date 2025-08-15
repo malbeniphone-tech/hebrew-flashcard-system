@@ -137,8 +137,8 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         # Build interactive flashcards: each card flips on click to reveal answer and context
         cards_html_parts = []
         for fc in flashcards:
-            # Determine the keyword from the question (format: מהו <keyword>?) for highlighting
-            keyword = re.sub(r'^מהו\s+', '', fc.question)
+            # Determine the keyword from the question (formats: מהו/מהי/מהם <keyword>?) for highlighting
+            keyword = re.sub(r'^(מהו|מהי|מהם)\s+', '', fc.question)
             keyword = re.sub(r'\?$', '', keyword).strip()
             # Highlight the keyword in the context for the back side
             try:
@@ -220,7 +220,7 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
             cards_parts = []
             for fc in additional:
                 # Extract keyword from the question of the additional card
-                keyword = re.sub(r'^מהו\s+', '', fc.question)
+                keyword = re.sub(r'^(מהו|מהי|מהם)\s+', '', fc.question)
                 keyword = re.sub(r'\?$', '', keyword).strip()
                 # Highlight the keyword in the context
                 try:
