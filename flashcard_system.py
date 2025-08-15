@@ -349,14 +349,21 @@ def generate_mcq(flashcards: Sequence[Flashcard], num_questions: int = 10) -> Li
         correct = fc.answer
         distractors: List[str] = []
         other_answers = [ans for ans in all_answers if ans != correct]
+        # Select up to three distractor definitions from other flashcards
         if other_answers:
             distractors = random.sample(other_answers, k=min(3, len(other_answers)))
+        # If there are fewer than three distractors, pad with the correct answer to avoid index errors
         while len(distractors) < 3:
             distractors.append(correct)
         options = distractors + [correct]
         random.shuffle(options)
         correct_index = options.index(correct)
-        questions.append(MCQQuestion(prompt=fc.question, options=options, correct_index=correct_index))
+        # Build a clearer prompt: ask for the definition of the concept rather than the concept itself
+        # Extract the keyword from the original question (e.g., "מהו X?" -> "X")
+        keyword = re.sub(r'^מה[וה]\s+', '', fc.question)
+        keyword = re.sub(r'\?$', '', keyword).strip()
+        prompt = f"מהי ההגדרה של {keyword}?"
+        questions.append(MCQQuestion(prompt=prompt, options=options, correct_index=correct_index))
     return questions
 
 
