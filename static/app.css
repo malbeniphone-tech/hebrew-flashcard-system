@@ -1,0 +1,25 @@
+:root{
+  --bg:#0b0c0f; --panel:#13151a; --line:#242830; --muted:#9aa3b2; --text:#e9edf3; --acc:#7aa2ff;
+  --radius:16px; --shadow:0 10px 30px rgba(0,0,0,.25)
+}
+*{box-sizing:border-box}
+html[dir="rtl"] body{font-family:system-ui,-apple-system,"Rubik","Assistant",Arial; background:var(--bg); color:var(--text); margin:0}
+.container{max-width:980px;margin:0 auto;padding:20px}
+header{position:sticky;top:0;backdrop-filter:blur(8px);background:rgba(11,12,15,.6);border-bottom:1px solid var(--line);z-index:10}
+nav{display:flex;gap:16px;padding:12px 20px}
+nav a{color:var(--text);opacity:.9;text-decoration:none}
+h1,h2{margin:.6em 0}
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px; box-shadow:var(--shadow)}
+.row{display:flex;flex-wrap:wrap;gap:12px}
+input,textarea,select,button{background:#0e1014;color:var(--text); border:1px solid var(--line); border-radius:12px; padding:10px 12px}
+button{cursor:pointer}
+button.primary{background:var(--acc);color:#0b0c0f;border:none}
+
+.flashgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.flashcard{background:linear-gradient(180deg,#151821,#101219); border:1px solid var(--line);
+  border-radius:20px; padding:16px; min-height:160px; transition:transform .2s ease, border-color .2s ease}
+.flashcard:hover{transform:translateY(-2px); border-color:#2d3340}
+.flashcard .q{font-weight:600; line-height:1.35; margin-bottom:12px}
+.flashcard .a{display:none; color:var(--muted); line-height:1.45}
+.flashcard.revealed .a{display:block}
+.badge{display:inline-block;padding:4px 8px;border:1px solid var(--line);border-radius:999px;font-size:.85rem;color:var(--muted)}
