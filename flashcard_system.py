@@ -223,23 +223,45 @@ def _split_sentences(text: str) -> List[str]:
 
 
 def _choose_keyword(sentence: str, vectorizer: TfidfVectorizer, tfidf_matrix, sentence_index: int) -> str:
-    """Pick the most salient token in a sentence based on TF‑IDF weights.
-
-    Given a fitted ``TfidfVectorizer`` and the corresponding matrix, we
-    extract the vector for the selected sentence and identify the
-    highest scoring token.  We ignore purely numeric tokens and very
-    short tokens (length < 3).  If no suitable token is found the
-    first word is used.
     """
+    Pick the most salient single‑word token in a sentence based on TF‑IDF weights.
+
+    This helper examines the TF‑IDF weights produced by ``vectorizer`` for
+    the given sentence and returns the highest scoring token that meets
+    a few criteria:
+
+    * The token must have a positive TF‑IDF weight.
+    * It must not be purely numeric.
+    * It must be at least 3 characters long.
+    * It must not contain whitespace (i.e. avoid multi‑word bigrams).
+
+    Using only single words avoids unnatural multi‑word blanks such as
+    ``"הם חיות"`` which can be difficult to guess.  If no suitable token
+    is found then we fall back to the first word of the sentence.
+    """
+    # Extract TF‑IDF scores for the sentence
     row = tfidf_matrix[sentence_index].toarray().flatten()
     tokens = vectorizer.get_feature_names_out()
+    # Pair tokens with their scores and sort descending
     token_scores = [(tok, row[i]) for i, tok in enumerate(tokens)]
     token_scores.sort(key=lambda x: x[1], reverse=True)
     for tok, score in token_scores:
-        if score > 0 and not tok.isdigit() and len(tok) >= 3:
-            return tok
+        # Skip zero‑weight tokens
+        if score <= 0:
+            continue
+        # Skip pure numbers
+        if tok.isdigit():
+            continue
+        # Skip very short tokens
+        if len(tok) < 3:
+            continue
+        # Ignore tokens containing whitespace (avoid bigrams)
+        if any(ch.isspace() for ch in tok):
+            continue
+        return tok
+    # Fallback: use the first word of the sentence
     words = sentence.split()
-    return words[0]
+    return words[0] if words else ''
 
 
 def _blank_sentence(sentence: str, keyword: str) -> str:
