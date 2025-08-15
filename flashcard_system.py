@@ -74,6 +74,197 @@ import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
 
+# Optional transformers integration
+try:
+    # We lazily import transformers so that systems without the dependency can
+    # still run the TF‑IDF based logic.  If transformers is unavailable or
+    # the required models cannot be downloaded (e.g., due to lack of network
+    # connectivity), the summariser variables below will remain None and the
+    # fallback extractive summarisation will be used instead.
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
+    _SUMMARISER_MODEL_NAME = "imvladikon/het5_small_summarization"
+    _summariser = None  # type: Optional[callable]
+    # For question generation we attempt to use a Hebrew instruction‑tuned
+    # model.  We defer loading the model until requested to avoid
+    # unnecessary overhead when not needed.  Note: these models are
+    # extremely large (billions of parameters) and may not run in
+    # constrained environments.  They are included here to illustrate how
+    # one might integrate an open‑source Hebrew Q&A generator when
+    # resources permit.
+    _QA_MODEL_NAME = "ronigold/dictalm2.0-instruct-fine-tuned-alpaca-gpt4-hebrew"
+    _qa_pipeline = None  # type: Optional[callable]
+except Exception:
+    # If transformers isn't installed, we simply skip summarisation
+    _summariser = None  # type: ignore
+
+
+def _get_summariser() -> Optional[callable]:
+    """Initialise and cache the Hebrew summarisation pipeline.
+
+    Returns a callable that takes a string and returns a summary.  If
+    ``transformers`` is not available or the model cannot be loaded,
+    this function returns ``None``.  The pipeline is created lazily on
+    first use to avoid unnecessary overhead.
+    """
+    global _summariser
+    if _summariser is not None:
+        return _summariser
+    try:
+        model = AutoModelForSeq2SeqLM.from_pretrained(_SUMMARISER_MODEL_NAME)
+        tokenizer = AutoTokenizer.from_pretrained(_SUMMARISER_MODEL_NAME)
+        _summariser = pipeline(
+            "summarization",
+            model=model,
+            tokenizer=tokenizer,
+            framework="pt",
+        )
+        return _summariser
+    except Exception:
+        # Model loading failed (e.g., no internet).  Leave summariser as None.
+        _summariser = None
+        return None
+
+# ----------------------------------------------------------------------------
+# Optional: Hebrew question generation using DictaLM‑based models
+# ----------------------------------------------------------------------------
+
+def _get_qa_generator() -> Optional[callable]:
+    """Initialise and cache a question generation pipeline for Hebrew.
+
+    This function lazily loads a large transformer model fine‑tuned for
+    generating question–answer pairs in Hebrew.  If the model cannot be
+    loaded (due to missing dependencies, lack of network connectivity or
+    insufficient resources) the function returns ``None``.  The pipeline
+    uses the text‑generation task and expects prompts instructing the model
+    to produce a series of questions and answers separated by newlines.
+
+    Returns
+    -------
+    Optional[callable]
+        A callable text generation pipeline, or ``None`` if loading failed.
+    """
+    global _qa_pipeline
+    if _qa_pipeline is not None:
+        return _qa_pipeline
+    try:
+        # We avoid importing heavy modules at the top‑level to allow the
+        # library to be absent.  Import here to catch failures gracefully.
+        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline as hf_pipeline
+        model = AutoModelForCausalLM.from_pretrained(_QA_MODEL_NAME)
+        tokenizer = AutoTokenizer.from_pretrained(_QA_MODEL_NAME)
+        _qa_pipeline = hf_pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            framework="pt",
+        )
+        return _qa_pipeline
+    except Exception:
+        _qa_pipeline = None
+        return None
+
+
+def generate_question_answer_pairs(text: str, num_pairs: int = 5) -> List[Tuple[str, str]]:
+    """Generate question–answer pairs from ``text`` using a Hebrew LLM.
+
+    This function attempts to use a large instruction‑tuned model to
+    produce natural question–answer pairs from the input text.  It
+    constructs a prompt asking the model to generate ``num_pairs`` pairs
+    separated by newlines.  The output is parsed heuristically: each
+    question is expected to end with a question mark and the following
+    sentence is taken as its answer.  If the model cannot be loaded or
+    the generation fails, an empty list is returned.
+
+    Parameters
+    ----------
+    text : str
+        The context from which to extract questions and answers.
+    num_pairs : int, optional
+        The number of pairs to request from the model.  Defaults to 5.
+
+    Returns
+    -------
+    List[Tuple[str, str]]
+        A list of (question, answer) tuples.  The list may be empty if
+        generation fails.
+    """
+    qa_gen = _get_qa_generator()
+    if qa_gen is None:
+        return []
+    # Compose an instruction in Hebrew.  We ask the model to produce
+    # numbered Q&A pairs to aid parsing.  The numbers help delineate
+    # boundaries but are removed in the final output.
+    prompt = (
+        f"כתוב {num_pairs} שאלות ותשובות בקשר לקטע הבא בעברית. "
+        f"הצג כל שאלה בשורה חדשה ולאחריה את התשובה באותה שורה בצורה ברורה.\n\n"
+        f"קטע:\n{text}\n"
+        f"שאלות ותשובות:"
+    )
+    try:
+        # We generate up to 1024 new tokens to accommodate several pairs.
+        outputs = qa_gen(prompt, max_new_tokens=1024, do_sample=False)
+        if not outputs:
+            return []
+        generated = outputs[0]["generated_text"]
+        # Find the portion after the prompt
+        # We look for the delimiter "שאלות ותשובות:" which we included
+        idx = generated.find("שאלות ותשובות:")
+        if idx >= 0:
+            generated = generated[idx + len("שאלות ותשובות:"):].strip()
+        lines = [ln.strip() for ln in generated.split('\n') if ln.strip()]
+        pairs: List[Tuple[str, str]] = []
+        for line in lines:
+            # Attempt to split question and answer by the last question mark
+            qm_pos = line.rfind('?')
+            if qm_pos > 0:
+                question = line[: qm_pos + 1].strip()
+                answer = line[qm_pos + 1:].strip()
+                # Remove leading numbering (e.g., "1.") if present
+                question = re.sub(r'^\d+\.\s*', '', question)
+                answer = re.sub(r'^[-\d\.\s]+', '', answer)
+                pairs.append((question, answer))
+            if len(pairs) >= num_pairs:
+                break
+        return pairs
+    except Exception:
+        return []
+
+
+def summarize_text(text: str, max_length: int = 100) -> Optional[str]:
+    """Return a concise summary of ``text`` using the Hebrew summariser.
+
+    If the summariser is unavailable or an error occurs, ``None`` is
+    returned so that callers can fall back to extractive techniques.
+
+    Parameters
+    ----------
+    text : str
+        The input text to summarise.
+    max_length : int
+        The maximum number of tokens to generate in the summary.  The
+        default of 100 tokens generally produces a few sentences.
+    Returns
+    -------
+    Optional[str]
+        A summary string, or ``None`` if summarisation failed.
+    """
+    summariser = _get_summariser()
+    if summariser is None:
+        return None
+    try:
+        summary_outputs = summariser(
+            text,
+            max_length=max_length,
+            no_repeat_ngram_size=2,
+            early_stopping=True,
+        )
+        if summary_outputs:
+            return summary_outputs[0]["summary_text"].strip()
+    except Exception:
+        # Summarisation failed unexpectedly
+        return None
+    return None
+
 
 # -----------------------------------------------------------------------------
 # Text extraction utilities
@@ -352,6 +543,38 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
     flush_section()
 
     flashcards: List[Flashcard] = []
+    
+    def _summarise_answer(ans: str) -> str:
+        """Return a concise version of ``ans`` if a summariser is available.
+
+        When the answer text is long (more than ~40 words) we attempt to
+        shorten it using the ``summarize_text`` function defined above.  This
+        uses a Hebrew transformer model to extract the main points of the
+        answer.  If summarisation is unavailable or fails, the original
+        answer is returned unchanged.  The maximum length is scaled to
+        roughly one third of the original word count to preserve salient
+        details without overwhelming the learner.
+
+        Parameters
+        ----------
+        ans : str
+            The original answer string.
+
+        Returns
+        -------
+        str
+            A potentially shortened version of the answer.
+        """
+        words = ans.split()
+        if len(words) < 40:
+            return ans
+        # Compute a max_length proportional to the input size, capped at 120
+        max_len = max(40, min(len(words) // 3, 120))
+        summary = summarize_text(ans, max_length=max_len)
+        if summary and len(summary.split()) < len(words):
+            # Remove trailing punctuation from summary for consistency
+            return summary.strip()
+        return ans
     # Build flashcards from structured sections if any were found
     #
     # In addition to simple concept–definition pairs, attempt to derive
@@ -376,7 +599,7 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
             if heading.endswith("ים") or heading.endswith("ות") or heading.endswith("אות"):
                 interrogative = "מהם"
             question = f"{interrogative} {heading}?"
-            answer = content
+            answer = _summarise_answer(content)
             flashcards.append(Flashcard(question=question, answer=answer, context=content))
         # Derive additional Q/A pairs from within the section content
         # Split the entire text into sentences for pattern matching
@@ -409,7 +632,8 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
                     q = f"לאיזה בעלי חיים מיועדת {subj_clean}?"
                 else:
                     q = f"למי מיועדת {subj_clean}?"
-                extra_cards.append(Flashcard(question=q, answer=targets.strip(), context=sent))
+                answer = _summarise_answer(targets.strip())
+                extra_cards.append(Flashcard(question=q, answer=answer, context=sent))
         # 2. Summarise enumerated plans beginning with "כלבים" or "חתולים"
         enumerated: List[List[str]] = []
         current_enum: List[str] = []
@@ -430,7 +654,8 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
             # concept‑definition card)
             if len(enum) >= 2:
                 q = "מה הם המסלולים וסכומי הביטוח שלהם בהפניקס?"
-                extra_cards.append(Flashcard(question=q, answer=ans, context=ans))
+                answer = _summarise_answer(ans)
+                extra_cards.append(Flashcard(question=q, answer=answer, context=ans))
         # 3. Comparative advantages versus competitors
         for sent in sentences:
             m = re.search(r'מול\s+([^,]+),\s*הפניקס\s+([^\.]+)', sent)
@@ -438,7 +663,8 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
                 competitor = m.group(1).strip()
                 advantage = m.group(2).strip()
                 q = f"מה יתרונותיה של הפניקס מול {competitor}?"
-                extra_cards.append(Flashcard(question=q, answer=advantage, context=sent))
+                answer = _summarise_answer(advantage)
+                extra_cards.append(Flashcard(question=q, answer=answer, context=sent))
         # Merge extra cards into flashcards while preserving order and
         # limiting to the requested number.  We append extra_cards after
         # the primary section cards so that high‑level concepts appear
