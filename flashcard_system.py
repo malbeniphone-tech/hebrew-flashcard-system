@@ -168,16 +168,38 @@ def extract_text(input_data: str) -> str:
     if os.path.exists(input_data):
         ext = os.path.splitext(input_data)[1].lower()
         if ext == '.docx':
-            return _parse_docx(input_data)
+            text = _parse_docx(input_data)
         elif ext == '.pdf':
-            return _parse_pdf(input_data)
+            text = _parse_pdf(input_data)
         elif ext == '.md':
-            return _parse_md(input_data)
+            text = _parse_md(input_data)
         else:
             with open(input_data, 'r', encoding='utf-8') as f:
-                return f.read()
+                text = f.read()
+        return _clean_text(text)
     else:
-        return input_data
+        return _clean_text(input_data)
+
+
+# -----------------------------------------------------------------------------
+# Text cleaning helper
+# -----------------------------------------------------------------------------
+def _clean_text(text: str) -> str:
+    """Normalise and clean extracted text.
+
+    This helper collapses consecutive whitespace into single spaces and
+    removes non‑printable control characters.  It preserves sentence
+    punctuation so that downstream sentence splitting continues to work.
+    """
+    if not text:
+        return ''
+    # Replace newlines and tabs with spaces
+    text = text.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+    # Collapse multiple spaces
+    text = re.sub(r'\s{2,}', ' ', text)
+    # Remove non‑printable characters
+    text = ''.join(ch for ch in text if ch.isprintable())
+    return text.strip()
 
 
 # -----------------------------------------------------------------------------

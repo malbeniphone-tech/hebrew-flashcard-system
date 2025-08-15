@@ -36,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import requests
+import re
 
 from flashcard_system import (
     extract_text,
@@ -132,12 +133,29 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         """
 
     def render_quiz(self, session_id: str, flashcards: list[Flashcard], mcqs: list[MCQQuestion]) -> str:
-        """Return HTML for the quiz page with flashcards and questions."""
-        # Display the flashcards to aid memorisation
-        flashcards_html = ''.join(
-            f"<li><strong>שאלה:</strong> {html.escape(fc.question)}<br><strong>תשובה:</strong> {html.escape(fc.answer)}</li>"
-            for fc in flashcards
-        )
+        """Return HTML for the quiz page with interactive flashcards and questions."""
+        # Build interactive flashcards: each card flips on click to reveal answer and context
+        cards_html_parts = []
+        for fc in flashcards:
+            # Highlight the answer in the context for the back side
+            try:
+                # Use regex for case‑insensitive replacement of first occurrence
+                pattern = re.compile(re.escape(fc.answer), flags=re.IGNORECASE)
+                highlighted_context = pattern.sub(lambda m: f"<strong>{m.group(0)}</strong>", fc.context, count=1)
+            except Exception:
+                highlighted_context = html.escape(fc.context)
+            front = f"<strong>שאלה:</strong> {html.escape(fc.question)}"
+            back = f"<strong>תשובה:</strong> {html.escape(fc.answer)}<br><small>{highlighted_context}</small>"
+            card_html = f"""
+        <div class="flashcard" onclick="flipCard(this)">
+          <div class="flashcard-inner">
+            <div class="flashcard-front">{front}</div>
+            <div class="flashcard-back">{back}</div>
+          </div>
+        </div>
+            """
+            cards_html_parts.append(card_html)
+        flashcards_html = '\n'.join(cards_html_parts)
         # Build the quiz form
         question_forms = []
         for q_idx, q in enumerate(mcqs):
@@ -156,20 +174,29 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
   <title>מבחן כרטיסיות</title>
   <style>
     body {{ font-family: sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }}
-    .container {{ max-width: 800px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+    .container {{ max-width: 900px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
     h2 {{ text-align: center; }}
-    ul {{ list-style: none; padding: 0; }}
-    li {{ margin-bottom: 10px; }}
+    .flashcard-container {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 20px; }}
+    .flashcard {{ width: 200px; height: 140px; perspective: 1000px; cursor: pointer; }}
+    .flashcard-inner {{ position: relative; width: 100%; height: 100%; transition: transform 0.6s; transform-style: preserve-3d; }}
+    .flashcard.is-flipped .flashcard-inner {{ transform: rotateY(180deg); }}
+    .flashcard-front, .flashcard-back {{ position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border: 1px solid #ccc; border-radius: 8px; padding: 10px; box-sizing: border-box; display: flex; justify-content: center; align-items: center; text-align: center; }}
+    .flashcard-back {{ transform: rotateY(180deg); background-color: #f8f8f8; }}
     button {{ margin-top: 15px; background-color: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }}
     button:hover {{ background-color: #218838; }}
   </style>
+  <script>
+    function flipCard(el) {{
+      el.classList.toggle('is-flipped');
+    }}
+  </script>
 </head>
 <body>
   <div class="container">
     <h2>כרטיסיות שנוצרו</h2>
-    <ul>
+    <div class="flashcard-container">
       {flashcards_html}
-    </ul>
+    </div>
     <h2>מבחן</h2>
     <form action="/quiz" method="post">
       <input type="hidden" name="session_id" value="{session_id}">
@@ -182,14 +209,36 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         """
 
     def render_results(self, score: int, total: int, wrong_indices: list[int], additional: list[Flashcard]) -> str:
-        """Return HTML for the results page."""
+        """Return HTML for the results page with optional reinforcement flashcards."""
         wrong_str = ', '.join(str(i + 1) for i in wrong_indices) if wrong_indices else 'לא היו טעויות'
+        # Build interactive additional flashcards if any
         additional_html = ''
         if additional:
-            additional_html = '<h2>כרטיסיות לחיזוק</h2><ul>' + ''.join(
-                f"<li><strong>שאלה:</strong> {html.escape(fc.question)}<br><strong>תשובה:</strong> {html.escape(fc.answer)}</li>"
-                for fc in additional
-            ) + '</ul>'
+            cards_parts = []
+            for fc in additional:
+                # highlight answer in context
+                try:
+                    pattern = re.compile(re.escape(fc.answer), flags=re.IGNORECASE)
+                    highlighted = pattern.sub(lambda m: f"<strong>{m.group(0)}</strong>", fc.context, count=1)
+                except Exception:
+                    highlighted = html.escape(fc.context)
+                front = f"<strong>שאלה:</strong> {html.escape(fc.question)}"
+                back = f"<strong>תשובה:</strong> {html.escape(fc.answer)}<br><small>{highlighted}</small>"
+                cards_parts.append(f"""
+            <div class="flashcard" onclick="flipCard(this)">
+              <div class="flashcard-inner">
+                <div class="flashcard-front">{front}</div>
+                <div class="flashcard-back">{back}</div>
+              </div>
+            </div>
+                """)
+            cards_html = '\n'.join(cards_parts)
+            additional_html = f"""
+    <h2>כרטיסיות לחיזוק</h2>
+    <div class="flashcard-container">
+      {cards_html}
+    </div>
+            """
         return f"""
 <!DOCTYPE html>
 <html lang="he">
@@ -199,13 +248,22 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
   <title>תוצאות מבחן</title>
   <style>
     body {{ font-family: sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }}
-    .container {{ max-width: 800px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+    .container {{ max-width: 900px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
     h2 {{ text-align: center; }}
-    ul {{ list-style: none; padding: 0; }}
-    li {{ margin-bottom: 10px; }}
     a {{ color: #007bff; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
+    .flashcard-container {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 20px; }}
+    .flashcard {{ width: 200px; height: 140px; perspective: 1000px; cursor: pointer; }}
+    .flashcard-inner {{ position: relative; width: 100%; height: 100%; transition: transform 0.6s; transform-style: preserve-3d; }}
+    .flashcard.is-flipped .flashcard-inner {{ transform: rotateY(180deg); }}
+    .flashcard-front, .flashcard-back {{ position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border: 1px solid #ccc; border-radius: 8px; padding: 10px; box-sizing: border-box; display: flex; justify-content: center; align-items: center; text-align: center; }}
+    .flashcard-back {{ transform: rotateY(180deg); background-color: #f8f8f8; }}
   </style>
+  <script>
+    function flipCard(el) {{
+      el.classList.toggle('is-flipped');
+    }}
+  </script>
 </head>
 <body>
   <div class="container">
