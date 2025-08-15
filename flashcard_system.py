@@ -402,7 +402,26 @@ def generate_mcq(flashcards: Sequence[Flashcard], num_questions: int = 10) -> Li
     """
     if not flashcards:
         return []
+    # Helper to shorten long definitions for use in MCQ options.  We
+    # truncate to a maximum number of words so that answer choices
+    # remain concise.  This avoids entire paragraphs appearing as
+    # options, which can overwhelm the learner.  See docs
+    #  【280062428660715†L46-L67】 for discussion of extractive summarisation.
+    def _shorten_definition(defn: str, max_words: int = 25) -> str:
+        """Return a shortened version of the definition limited to
+        ``max_words`` words.  If the definition is shorter than the
+        limit it is returned unchanged.  An ellipsis is appended to
+        indicate truncation."""
+        words = defn.split()
+        if len(words) <= max_words:
+            return defn.strip()
+        return " ".join(words[:max_words]).strip() + " …"
+
+    # Pre‑compute shortened versions of all flashcard answers for use
+    # when building multiple‑choice options.  We use the original
+    # definitions as keys to preserve mapping back to full answers.
     all_answers = [fc.answer for fc in flashcards]
+    shortened_lookup = {ans: _shorten_definition(ans) for ans in all_answers}
     questions: List[MCQQuestion] = []
     indices = list(range(len(flashcards)))
     random.shuffle(indices)
@@ -417,9 +436,14 @@ def generate_mcq(flashcards: Sequence[Flashcard], num_questions: int = 10) -> Li
         # If there are fewer than three distractors, pad with the correct answer to avoid index errors
         while len(distractors) < 3:
             distractors.append(correct)
-        options = distractors + [correct]
-        random.shuffle(options)
-        correct_index = options.index(correct)
+        # Build options list using shortened versions for readability
+        options_full = distractors + [correct]
+        # Shuffle options to randomise order
+        random.shuffle(options_full)
+        # Determine index of correct answer
+        correct_index = options_full.index(correct)
+        # Replace options with shortened strings
+        options = [shortened_lookup.get(opt, opt) for opt in options_full]
         # Build a clearer prompt: ask for the definition of the concept rather than the concept itself.
         # Extract the keyword from the original question, removing pronouns such as
         # "מהו", "מהי" or "מהם" at the start and any trailing question mark.  For example
