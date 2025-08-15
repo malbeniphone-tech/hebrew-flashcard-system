@@ -179,12 +179,46 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
     body {{ font-family: sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }}
     .container {{ max-width: 900px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
     h2 {{ text-align: center; }}
-    .flashcard-container {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 20px; }}
-    .flashcard {{ width: 200px; height: 140px; perspective: 1000px; cursor: pointer; }}
-    .flashcard-inner {{ position: relative; width: 100%; height: 100%; transition: transform 0.6s; transform-style: preserve-3d; }}
+    /* Responsive grid for flashcards */
+    .flashcard-container {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+      margin-bottom: 20px;
+    }}
+    .flashcard {{
+      width: 100%;
+      height: 200px;
+      perspective: 1000px;
+      cursor: pointer;
+    }}
+    .flashcard-inner {{
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.6s;
+      transform-style: preserve-3d;
+    }}
     .flashcard.is-flipped .flashcard-inner {{ transform: rotateY(180deg); }}
-    .flashcard-front, .flashcard-back {{ position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border: 1px solid #ccc; border-radius: 8px; padding: 10px; box-sizing: border-box; display: flex; justify-content: center; align-items: center; text-align: center; }}
-    .flashcard-back {{ transform: rotateY(180deg); background-color: #f8f8f8; }}
+    .flashcard-front, .flashcard-back {{
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 10px;
+      box-sizing: border-box;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      overflow-y: auto;
+    }}
+    .flashcard-back {{
+      transform: rotateY(180deg);
+      background-color: #f8f8f8;
+    }}
     button {{ margin-top: 15px; background-color: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }}
     button:hover {{ background-color: #218838; }}
   </style>
@@ -258,12 +292,46 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
     h2 {{ text-align: center; }}
     a {{ color: #007bff; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
-    .flashcard-container {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 20px; }}
-    .flashcard {{ width: 200px; height: 140px; perspective: 1000px; cursor: pointer; }}
-    .flashcard-inner {{ position: relative; width: 100%; height: 100%; transition: transform 0.6s; transform-style: preserve-3d; }}
+    /* Responsive grid for flashcards */
+    .flashcard-container {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+      margin-bottom: 20px;
+    }}
+    .flashcard {{
+      width: 100%;
+      height: 200px;
+      perspective: 1000px;
+      cursor: pointer;
+    }}
+    .flashcard-inner {{
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.6s;
+      transform-style: preserve-3d;
+    }}
     .flashcard.is-flipped .flashcard-inner {{ transform: rotateY(180deg); }}
-    .flashcard-front, .flashcard-back {{ position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border: 1px solid #ccc; border-radius: 8px; padding: 10px; box-sizing: border-box; display: flex; justify-content: center; align-items: center; text-align: center; }}
-    .flashcard-back {{ transform: rotateY(180deg); background-color: #f8f8f8; }}
+    .flashcard-front, .flashcard-back {{
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 10px;
+      box-sizing: border-box;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      overflow-y: auto;
+    }}
+    .flashcard-back {{
+      transform: rotateY(180deg);
+      background-color: #f8f8f8;
+    }}
   </style>
   <script>
     function flipCard(el) {{
