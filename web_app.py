@@ -46,6 +46,8 @@ from flashcard_system import (
     generate_additional_flashcards,
     Flashcard,
     MCQQuestion,
+    make_short_question,
+    make_bullets,
 )
 
 
@@ -68,8 +70,32 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content.encode("utf-8"))
 
     def do_GET(self):
+        # Serve the home page or static assets
         if self.path == '/':
             self._send_html(self.render_home())
+        elif self.path.startswith('/static/'):
+            # Serve static files from the 'static' directory relative to this script
+            rel_path = self.path.lstrip('/')
+            fs_path = os.path.join(os.path.dirname(__file__), rel_path)
+            if os.path.isfile(fs_path):
+                try:
+                    with open(fs_path, 'rb') as f:
+                        data = f.read()
+                    # Determine a simple content type based on extension
+                    if fs_path.endswith('.css'):
+                        ctype = 'text/css'
+                    elif fs_path.endswith('.js'):
+                        ctype = 'application/javascript'
+                    else:
+                        ctype = 'application/octet-stream'
+                    self.send_response(200)
+                    self.send_header("Content-type", ctype)
+                    self.end_headers()
+                    self.wfile.write(data)
+                except Exception:
+                    self.send_error(500, "Error reading static file")
+            else:
+                self.send_error(404)
         else:
             self.send_error(404)
 
@@ -89,76 +115,53 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         """Return the HTML for the home page with the input form."""
         return f"""
 <!DOCTYPE html>
-<html lang="he">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>יצירת כרטיסיות ובחינה</title>
-  <style>
-    body {{ font-family: sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }}
-    .container {{ max-width: 800px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-    h1 {{ text-align: center; }}
-    label {{ display: block; margin-top: 10px; font-weight: bold; }}
-    input[type="text"], textarea {{ width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }}
-    input[type="number"] {{ width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; }}
-    input[type="file"] {{ margin-top: 4px; }}
-    button {{ margin-top: 15px; background-color: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }}
-    button:hover {{ background-color: #0056b3; }}
-  </style>
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <div class="container">
+  <main class="container">
     <h1>יצירת כרטיסיות ובחינה</h1>
-    <form action="/generate" method="post" enctype="multipart/form-data">
-      <label for="text">מלל חופשי:</label>
-      <textarea id="text" name="text" rows="6" placeholder="כתוב כאן טקסט בעברית"></textarea>
+    <div class="panel">
+      <form action="/generate" method="post" enctype="multipart/form-data" class="row">
+        <label for="text">מלל חופשי:</label>
+        <textarea id="text" name="text" rows="6" placeholder="כתוב כאן טקסט בעברית"></textarea>
 
-      <label for="url">או הזן קישור למסמך:</label>
-      <input type="text" id="url" name="url" placeholder="https://example.com/file.txt">
+        <label for="url">או הזן קישור למסמך:</label>
+        <input type="text" id="url" name="url" placeholder="https://example.com/file.txt">
 
-      <label for="file">או העלה קובץ:</label>
-      <input type="file" id="file" name="file">
+        <label for="file">או העלה קובץ:</label>
+        <input type="file" id="file" name="file">
 
-      <label for="cards">מספר כרטיסיות (ברירת מחדל 20):</label>
-      <input type="number" id="cards" name="cards" value="20" min="1" max="100">
+        <label for="cards">מספר כרטיסיות (ברירת מחדל 20):</label>
+        <input type="number" id="cards" name="cards" value="20" min="1" max="100">
 
-      <label for="questions">מספר שאלות במבחן (ברירת מחדל 10):</label>
-      <input type="number" id="questions" name="questions" value="10" min="1" max="50">
+        <label for="questions">מספר שאלות במבחן (ברירת מחדל 10):</label>
+        <input type="number" id="questions" name="questions" value="10" min="1" max="50">
 
-      <button type="submit">צור</button>
-    </form>
-  </div>
+        <button class="primary" type="submit">צור</button>
+      </form>
+    </div>
+  </main>
 </body>
 </html>
         """
 
     def render_quiz(self, session_id: str, flashcards: list[Flashcard], mcqs: list[MCQQuestion]) -> str:
         """Return HTML for the quiz page with interactive flashcards and questions."""
-        # Build interactive flashcards: each card flips on click to reveal answer and context
+        # Build cards using concise question and bullet answer lists
         cards_html_parts = []
         for fc in flashcards:
-            # Determine the keyword from the question (formats: מהו/מהי/מהם <keyword>?) for highlighting
-            keyword = re.sub(r'^(מהו|מהי|מהם)\s+', '', fc.question)
-            keyword = re.sub(r'\?$', '', keyword).strip()
-            # Highlight the keyword in the context for the back side
-            try:
-                pattern = re.compile(re.escape(keyword), flags=re.IGNORECASE)
-                highlighted_context = pattern.sub(lambda m: f"<strong>{m.group(0)}</strong>", fc.context, count=1)
-            except Exception:
-                highlighted_context = html.escape(fc.context)
-            front = f"<strong>מושג:</strong> {html.escape(keyword)}"
-            back = f"<strong>הגדרה:</strong> {html.escape(fc.answer)}<br><small>{highlighted_context}</small>"
-            card_html = f"""
-        <div class="flashcard" onclick="flipCard(this)">
-          <div class="flashcard-inner">
-            <div class="flashcard-front">{front}</div>
-            <div class="flashcard-back">{back}</div>
-          </div>
-        </div>
-            """
-            cards_html_parts.append(card_html)
-        flashcards_html = '\n'.join(cards_html_parts)
-        # Only render flashcards; no CSV export is generated. The interactive cards themselves are intended for practice.
+            q_short = make_short_question(fc.question)
+            bullets = make_bullets(fc.answer)
+            bullets_html = ''.join(f"• {html.escape(p)}<br>" for p in bullets)
+            cards_html_parts.append(
+                f"<div class=\"flashcard\"><div class=\"q\">{html.escape(q_short)}</div><div class=\"a\">{bullets_html}</div></div>"
+            )
+        flashcards_html = ''.join(cards_html_parts)
         # Build the quiz form
         question_forms = []
         for q_idx, q in enumerate(mcqs):
@@ -170,77 +173,27 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         quiz_html = ''.join(question_forms)
         return f"""
 <!DOCTYPE html>
-<html lang="he">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>מבחן כרטיסיות</title>
-  <style>
-    body {{ font-family: sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }}
-    .container {{ max-width: 900px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-    h2 {{ text-align: center; }}
-    /* Responsive grid for flashcards */
-    .flashcard-container {{
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 20px;
-      margin-bottom: 20px;
-    }}
-    .flashcard {{
-      width: 100%;
-      height: 200px;
-      perspective: 1000px;
-      cursor: pointer;
-    }}
-    .flashcard-inner {{
-      position: relative;
-      width: 100%;
-      height: 100%;
-      transition: transform 0.6s;
-      transform-style: preserve-3d;
-    }}
-    .flashcard.is-flipped .flashcard-inner {{ transform: rotateY(180deg); }}
-    .flashcard-front, .flashcard-back {{
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      backface-visibility: hidden;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      padding: 10px;
-      box-sizing: border-box;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      text-align: center;
-      overflow-y: auto;
-    }}
-    .flashcard-back {{
-      transform: rotateY(180deg);
-      background-color: #f8f8f8;
-    }}
-    button {{ margin-top: 15px; background-color: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }}
-    button:hover {{ background-color: #218838; }}
-  </style>
-  <script>
-    function flipCard(el) {{
-      el.classList.toggle('is-flipped');
-    }}
-  </script>
+  <title>כרטיסיות ומבחן</title>
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <div class="container">
-    <h2>כרטיסיות שנוצרו</h2>
-    <div class="flashcard-container">
+  <main class="container">
+    <h1>כרטיסיות</h1>
+    <section class="flashgrid panel">
       {flashcards_html}
-    </div>
-    <h2>מבחן</h2>
-    <form action="/quiz" method="post">
+    </section>
+    <h1>מבחן</h1>
+    <form action="/quiz" method="post" class="panel">
       <input type="hidden" name="session_id" value="{session_id}">
       {quiz_html}
-      <button type="submit">שלח תשובות</button>
+      <button class="primary" type="submit">שלח תשובות</button>
     </form>
-  </div>
+  </main>
+  <script src="/static/app.js"></script>
 </body>
 </html>
         """
@@ -253,100 +206,39 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         if additional:
             cards_parts = []
             for fc in additional:
-                # Extract keyword from the question of the additional card
-                keyword = re.sub(r'^(מהו|מהי|מהם)\s+', '', fc.question)
-                keyword = re.sub(r'\?$', '', keyword).strip()
-                # Highlight the keyword in the context
-                try:
-                    pattern = re.compile(re.escape(keyword), flags=re.IGNORECASE)
-                    highlighted = pattern.sub(lambda m: f"<strong>{m.group(0)}</strong>", fc.context, count=1)
-                except Exception:
-                    highlighted = html.escape(fc.context)
-                front = f"<strong>מושג:</strong> {html.escape(keyword)}"
-                back = f"<strong>הגדרה:</strong> {html.escape(fc.answer)}<br><small>{highlighted}</small>"
-                cards_parts.append(f"""
-            <div class="flashcard" onclick="flipCard(this)">
-              <div class="flashcard-inner">
-                <div class="flashcard-front">{front}</div>
-                <div class="flashcard-back">{back}</div>
-              </div>
-            </div>
-                """)
-            cards_html = '\n'.join(cards_parts)
+                q_short = make_short_question(fc.question)
+                bullets = make_bullets(fc.answer)
+                bullets_html = ''.join(f"• {html.escape(p)}<br>" for p in bullets)
+                cards_parts.append(
+                    f"<div class=\"flashcard\"><div class=\"q\">{html.escape(q_short)}</div><div class=\"a\">{bullets_html}</div></div>"
+                )
+            cards_html = ''.join(cards_parts)
             additional_html = f"""
     <h2>כרטיסיות לחיזוק</h2>
-    <div class="flashcard-container">
+    <section class="flashgrid panel">
       {cards_html}
-    </div>
+    </section>
             """
         return f"""
 <!DOCTYPE html>
-<html lang="he">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>תוצאות מבחן</title>
-  <style>
-    body {{ font-family: sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }}
-    .container {{ max-width: 900px; margin: 20px auto; padding: 20px; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-    h2 {{ text-align: center; }}
-    a {{ color: #007bff; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-    /* Responsive grid for flashcards */
-    .flashcard-container {{
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 20px;
-      margin-bottom: 20px;
-    }}
-    .flashcard {{
-      width: 100%;
-      height: 200px;
-      perspective: 1000px;
-      cursor: pointer;
-    }}
-    .flashcard-inner {{
-      position: relative;
-      width: 100%;
-      height: 100%;
-      transition: transform 0.6s;
-      transform-style: preserve-3d;
-    }}
-    .flashcard.is-flipped .flashcard-inner {{ transform: rotateY(180deg); }}
-    .flashcard-front, .flashcard-back {{
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      backface-visibility: hidden;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      padding: 10px;
-      box-sizing: border-box;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      text-align: center;
-      overflow-y: auto;
-    }}
-    .flashcard-back {{
-      transform: rotateY(180deg);
-      background-color: #f8f8f8;
-    }}
-  </style>
-  <script>
-    function flipCard(el) {{
-      el.classList.toggle('is-flipped');
-    }}
-  </script>
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <div class="container">
-    <h2>תוצאות</h2>
-    <p>הציון שלך: {score}/{total}</p>
-    <p>שאלות בהן טעית: {wrong_str}</p>
-    {additional_html}
-    <p><a href="/">חזרה לעמוד הראשי</a></p>
-  </div>
+  <main class="container">
+    <h1>תוצאות</h1>
+    <div class="panel">
+      <p>הציון שלך: {score}/{total}</p>
+      <p>שאלות בהן טעית: {wrong_str}</p>
+      {additional_html}
+      <p><a href="/">חזרה לעמוד הראשי</a></p>
+    </div>
+  </main>
+  <script src="/static/app.js"></script>
 </body>
 </html>
         """

@@ -69,6 +69,60 @@ import string
 import zipfile
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Sequence, Optional
+import re
+
+# --------------------------------------------------------------------
+# Helper functions for shortening questions and answers
+def _clamp(s: str, n: int) -> str:
+    """Trim string to at most n characters, preserving whole words."""
+    s = re.sub(r"\s+", " ", (s or "").strip())
+    if len(s) <= n:
+        return s
+    return re.sub(r"\s+\S*$", "", s[:n]) + "…"
+
+
+def make_short_question(q: str) -> str:
+    """
+    Produce a concise, focused question from the original question.
+    If the question does not begin with a Hebrew wh-word, prefix it
+    with a generic prompt.  Limit length to ~70 characters.
+    """
+    q = (q or "").strip()
+    # If there is no wh‑word at the start, prefix with 'מה העיקר כאן:'
+    if not re.match(r"^(מה|למה|איך|מתי|מי|איפה)\b", q):
+        q = "מה העיקר כאן: " + q
+    # Replace "הסבר על X" with "מה חשוב ב-X"
+    q = re.sub(r"^הסבר(ו)?\s+על\s+", "מה חשוב ב-", q, flags=re.I)
+    return _clamp(q, 70)
+
+
+def make_bullets(a: str, max_items: int = 3) -> list[str]:
+    """
+    Split the answer into up to max_items bullet points.  Each bullet
+    is trimmed to about 60 characters.  If splitting yields no parts,
+    return a single clamped string.
+    """
+    a = (a or "").strip()
+    # Split on newlines, bullets, dashes, semicolons or full stops
+    parts = re.split(r"(?:[\r\n]+|•|–|—|-|·|;|,)\s+", a)
+    parts = [re.sub(r"\s+", " ", p).strip() for p in parts if p and len(p.strip()) > 1]
+    parts = parts[:max_items]
+    if not parts:
+        parts = [_clamp(a, 160)]
+    return [_clamp(p, 60) for p in parts]
+
+
+def enrich_card(card: dict) -> dict:
+    """
+    Enrich a flashcard dict with short question and bullet answer fields.
+    This adds 'q_short' and 'a_bullets' keys that can be used by
+    presentation layers to render succinct Q&A.
+    """
+    q = card.get("question") or card.get("q") or ""
+    a = card.get("answer") or card.get("a") or ""
+    card["q_short"] = make_short_question(q)
+    card["a_bullets"] = make_bullets(a)
+    return card
 
 import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
