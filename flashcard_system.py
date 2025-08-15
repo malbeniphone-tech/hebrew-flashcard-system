@@ -677,6 +677,26 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
                 seen_questions.add(card.question)
             if len(final_cards) >= num_cards:
                 break
+        # ------------------------------------------------------------------
+        # Scenario cards: derive "אם לקוח מתלבט" questions from comparative advantages
+        #
+        # For each card that asks about advantages versus a competitor ("מה יתרונותיה של X מול Y")
+        # generate an additional scenario card that frames the same answer as a customer dilemma.
+        # These cards help practise handling objections and explaining benefits in a sales context.
+        scenario_cards: List[Flashcard] = []
+        for card in list(final_cards):
+            m = re.match(r"מה יתרונותיה של\s+(.*?)\s+מול\s+(.*)\?", card.question)
+            if m:
+                subject = m.group(1).strip()
+                competitor = m.group(2).strip()
+                scenario_q = f"אם לקוח מתלבט בין {subject} ל{competitor}, כיצד תציג את היתרונות?"
+                scenario_cards.append(Flashcard(question=scenario_q, answer=card.answer, context=card.context))
+        for sc in scenario_cards:
+            if len(final_cards) >= num_cards:
+                break
+            if sc.question not in seen_questions:
+                final_cards.append(sc)
+                seen_questions.add(sc.question)
         return final_cards
 
     # Fallback: extractive summarisation
