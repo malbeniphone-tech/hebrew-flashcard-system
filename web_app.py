@@ -137,15 +137,17 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         # Build interactive flashcards: each card flips on click to reveal answer and context
         cards_html_parts = []
         for fc in flashcards:
-            # Highlight the answer in the context for the back side
+            # Determine the keyword from the question (format: מהו <keyword>?) for highlighting
+            keyword = re.sub(r'^מהו\s+', '', fc.question)
+            keyword = re.sub(r'\?$', '', keyword).strip()
+            # Highlight the keyword in the context for the back side
             try:
-                # Use regex for case‑insensitive replacement of first occurrence
-                pattern = re.compile(re.escape(fc.answer), flags=re.IGNORECASE)
+                pattern = re.compile(re.escape(keyword), flags=re.IGNORECASE)
                 highlighted_context = pattern.sub(lambda m: f"<strong>{m.group(0)}</strong>", fc.context, count=1)
             except Exception:
                 highlighted_context = html.escape(fc.context)
-            front = f"<strong>שאלה:</strong> {html.escape(fc.question)}"
-            back = f"<strong>תשובה:</strong> {html.escape(fc.answer)}<br><small>{highlighted_context}</small>"
+            front = f"<strong>מושג:</strong> {html.escape(keyword)}"
+            back = f"<strong>הגדרה:</strong> {html.escape(fc.answer)}<br><small>{highlighted_context}</small>"
             card_html = f"""
         <div class="flashcard" onclick="flipCard(this)">
           <div class="flashcard-inner">
@@ -216,14 +218,17 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
         if additional:
             cards_parts = []
             for fc in additional:
-                # highlight answer in context
+                # Extract keyword from the question of the additional card
+                keyword = re.sub(r'^מהו\s+', '', fc.question)
+                keyword = re.sub(r'\?$', '', keyword).strip()
+                # Highlight the keyword in the context
                 try:
-                    pattern = re.compile(re.escape(fc.answer), flags=re.IGNORECASE)
+                    pattern = re.compile(re.escape(keyword), flags=re.IGNORECASE)
                     highlighted = pattern.sub(lambda m: f"<strong>{m.group(0)}</strong>", fc.context, count=1)
                 except Exception:
                     highlighted = html.escape(fc.context)
-                front = f"<strong>שאלה:</strong> {html.escape(fc.question)}"
-                back = f"<strong>תשובה:</strong> {html.escape(fc.answer)}<br><small>{highlighted}</small>"
+                front = f"<strong>מושג:</strong> {html.escape(keyword)}"
+                back = f"<strong>הגדרה:</strong> {html.escape(fc.answer)}<br><small>{highlighted}</small>"
                 cards_parts.append(f"""
             <div class="flashcard" onclick="flipCard(this)">
               <div class="flashcard-inner">

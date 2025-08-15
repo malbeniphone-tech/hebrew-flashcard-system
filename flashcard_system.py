@@ -312,8 +312,11 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
     for idx in selected_indices:
         sentence = sentences[idx]
         keyword = _choose_keyword(sentence, vectorizer, tfidf_matrix, idx)
-        question = _blank_sentence(sentence, keyword)
-        flashcards.append(Flashcard(question=question, answer=keyword, context=sentence))
+        # Create a flashcard where the front poses a question about the keyword
+        # and the back reveals the full sentence as the definition/context.
+        question = f"מהו {keyword}?"
+        answer = sentence.strip()
+        flashcards.append(Flashcard(question=question, answer=answer, context=sentence))
     return flashcards
 
 
@@ -384,24 +387,29 @@ def generate_additional_flashcards(flashcards: Sequence[Flashcard], wrong_indice
     controlled with ``count``.
     """
     additional: List[Flashcard] = []
+    # Extract contexts for incorrectly answered flashcards
     contexts = [flashcards[i].context for i in wrong_indices]
     if not contexts:
         return additional
     vectorizer = TfidfVectorizer(max_df=0.9, min_df=1, ngram_range=(1, 2))
     tfidf_matrix = vectorizer.fit_transform(contexts)
     for i, ctx in enumerate(contexts[:count]):
-        original_keyword = flashcards[wrong_indices[i]].answer
+        # Extract the original keyword from the question (assumes format 'מהו <keyword>?')
+        orig_question = flashcards[wrong_indices[i]].question
+        original_keyword = re.sub(r'^מהו\s+', '', orig_question)
+        original_keyword = re.sub(r'\?$', '', original_keyword).strip()
         row = tfidf_matrix[i].toarray().flatten()
         tokens = vectorizer.get_feature_names_out()
         token_scores = [(tok, row[j]) for j, tok in enumerate(tokens)]
         token_scores.sort(key=lambda x: x[1], reverse=True)
-        keyword = original_keyword
+        new_keyword = original_keyword
         for tok, score in token_scores:
             if score > 0 and tok != original_keyword and len(tok) >= 3:
-                keyword = tok
+                new_keyword = tok
                 break
-        question = _blank_sentence(ctx, keyword)
-        additional.append(Flashcard(question=question, answer=keyword, context=ctx))
+        # Formulate new flashcard: ask about the new keyword, answer is the full sentence
+        question = f"מהו {new_keyword}?"
+        additional.append(Flashcard(question=question, answer=ctx.strip(), context=ctx))
     return additional
 
 
