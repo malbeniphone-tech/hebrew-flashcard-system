@@ -68,7 +68,7 @@ import re
 import string
 import zipfile
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict, Sequence
+from typing import List, Tuple, Dict, Sequence, Optional
 
 import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -353,8 +353,24 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
 
     flashcards: List[Flashcard] = []
     # Build flashcards from structured sections if any were found
+    #
+    # In addition to simple concept–definition pairs, attempt to derive
+    # more specific question/answer pairs from the text.  We look for
+    # sentences that state for whom a policy is intended ("מיועד/ת ל…"),
+    # bullet‑style enumerations of different plans (lines beginning
+    # with "כלבים" or "חתולים"), and comparative phrases describing
+    # advantages versus competitors ("מול X, הפניקס …").  These
+    # heuristics help produce flashcards closer to the user’s
+    # examples, such as asking to which animals a policy applies or
+    # summarising multiple insurance tracks.
     if sections:
-        for heading, content in sections[:num_cards]:
+        for heading, content in sections:
+            # Skip enumerated lines that describe specific age categories (e.g.
+            # "כלבים וחתולים עד גיל 8") since they will be summarised
+            # separately as part of the plan enumeration flashcard.  Including
+            # them here leads to unnatural questions such as "מהי כלבים וחתולים עד גיל 8".
+            if re.match(r'^(כלבים|חתולים)', heading):
+                continue
             # Choose interrogative based on simple plural heuristic
             interrogative = "מהי"
             if heading.endswith("ים") or heading.endswith("ות") or heading.endswith("אות"):
@@ -362,7 +378,80 @@ def generate_flashcards(text: str, num_cards: int = 20) -> List[Flashcard]:
             question = f"{interrogative} {heading}?"
             answer = content
             flashcards.append(Flashcard(question=question, answer=answer, context=content))
-        return flashcards
+        # Derive additional Q/A pairs from within the section content
+        # Split the entire text into sentences for pattern matching
+        sentences = _split_sentences(text)
+        extra_cards: List[Flashcard] = []
+        # 1. Questions about intended audience (מיועדת ל…)
+        for sent in sentences:
+            # Look for phrases like "פוליסת הפניקס מיועדת לכלבים וחתולים…"
+            m = re.search(r'([^\.\n\?]+?)\s+מיועד[ת] ל\s*([^\.\n]+)', sent)
+            if m:
+                subject = m.group(1).strip()
+                targets = m.group(2).strip()
+                # Formulate question.  If the subject contains the word
+                # "פוליסת" then ask "לאיזה בעלי חיים מיועדת …?", otherwise
+                # ask a generic "למי מיועדת …?".  Strip leading determiners
+                # such as "ה" for better readability.
+                subj_clean = subject.strip()
+                # Remove leading "ה" if present to avoid unnatural phrasing
+                subj_clean = re.sub(r'^ה', '', subj_clean)
+                # If the subject mentions a policy, attempt to extract just the
+                # policy name (e.g. "פוליסת הפניקס") rather than the entire
+                # heading.  This avoids overly long questions such as
+                # "פוליסת הפניקס – עיקרי התנאים והכיסויים פוליסת הפניקס".
+                if 'פוליס' in subj_clean:
+                    mpol = re.search(r'(פוליס[^\s]*\s+\S+)', subj_clean)
+                    if mpol:
+                        subj_clean = mpol.group(1).strip()
+                # Formulate specific or generic question depending on subject
+                if 'פוליס' in subj_clean:
+                    q = f"לאיזה בעלי חיים מיועדת {subj_clean}?"
+                else:
+                    q = f"למי מיועדת {subj_clean}?"
+                extra_cards.append(Flashcard(question=q, answer=targets.strip(), context=sent))
+        # 2. Summarise enumerated plans beginning with "כלבים" or "חתולים"
+        enumerated: List[List[str]] = []
+        current_enum: List[str] = []
+        for ln in lines:
+            if re.match(r'^(כלבים|חתולים)', ln):
+                current_enum.append(ln)
+            else:
+                if current_enum:
+                    enumerated.append(current_enum)
+                    current_enum = []
+        if current_enum:
+            enumerated.append(current_enum)
+        for enum in enumerated:
+            # Join the enumeration lines into a single answer string
+            ans = " ".join(enum)
+            # Only create this card if there are at least two items (otherwise
+            # it’s just a single plan and will already be covered by the
+            # concept‑definition card)
+            if len(enum) >= 2:
+                q = "מה הם המסלולים וסכומי הביטוח שלהם בהפניקס?"
+                extra_cards.append(Flashcard(question=q, answer=ans, context=ans))
+        # 3. Comparative advantages versus competitors
+        for sent in sentences:
+            m = re.search(r'מול\s+([^,]+),\s*הפניקס\s+([^\.]+)', sent)
+            if m:
+                competitor = m.group(1).strip()
+                advantage = m.group(2).strip()
+                q = f"מה יתרונותיה של הפניקס מול {competitor}?"
+                extra_cards.append(Flashcard(question=q, answer=advantage, context=sent))
+        # Merge extra cards into flashcards while preserving order and
+        # limiting to the requested number.  We append extra_cards after
+        # the primary section cards so that high‑level concepts appear
+        # first.  Duplicate questions are filtered.
+        seen_questions: set[str] = set()
+        final_cards: List[Flashcard] = []
+        for card in flashcards + extra_cards:
+            if card.question not in seen_questions:
+                final_cards.append(card)
+                seen_questions.add(card.question)
+            if len(final_cards) >= num_cards:
+                break
+        return final_cards
 
     # Fallback: extractive summarisation
     sentences = _split_sentences(text)
