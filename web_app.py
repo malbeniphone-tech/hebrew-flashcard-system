@@ -158,6 +158,7 @@ class FlashcardRequestHandler(BaseHTTPRequestHandler):
             """
             cards_html_parts.append(card_html)
         flashcards_html = '\n'.join(cards_html_parts)
+        # Only render flashcards; no CSV export is generated. The interactive cards themselves are intended for practice.
         # Build the quiz form
         question_forms = []
         for q_idx, q in enumerate(mcqs):
